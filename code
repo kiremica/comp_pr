@@ -1,0 +1,112 @@
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import f1_score
+
+# Загрузка данных и извлечение необходимых столбцов
+data = pd.read_csv('merged_data.csv')
+data = data[['HomeTeam', 'AwayTeam', 'FTHG', 'FTAG']]
+
+# Расчет рейтинга Эло для каждой команды
+elo_ratings = {}
+K = 20  # коэффициент К для рейтинга Эло
+for index, row in data.iterrows():
+    home_team = row['HomeTeam']
+    away_team = row['AwayTeam']
+    home_score = row['FTHG']
+    away_score = row['FTAG']
+
+    # Расчет рейтинга Эло для домашней команды
+    if home_team not in elo_ratings:
+        elo_ratings[home_team] = 1500
+    
+    # Расчет рейтинга Эло для гостевой команды
+    if away_team not in elo_ratings:
+        elo_ratings[away_team] = 1500
+
+        
+    expected_home_score = 1 / (1 + 10 ** ((elo_ratings[away_team] - elo_ratings[home_team]) / 400))
+    if home_score + away_score != 0:
+        actual_home_score = home_score / (home_score + away_score)
+        actual_away_score = away_score / (home_score + away_score)
+    else:
+        home_score=home_score= 0.5
+        
+    elo_ratings[home_team] = elo_ratings[home_team] + K * (actual_home_score - expected_home_score)
+
+
+    expected_away_score = 1 / (1 + 10 ** ((elo_ratings[home_team] - elo_ratings[away_team]) / 400))
+    elo_ratings[away_team] = elo_ratings[away_team] + K * (actual_away_score - expected_away_score)
+
+# Добавление учета форы для домашней команды
+def apply_handicap(home_score, away_score, handicap):
+    if handicap > 0:
+        home_score += handicap
+    else:
+        away_score -= handicap
+    return home_score, away_score
+
+# Формирование датасета для обучения модели
+data['HomeElo'] = data['HomeTeam'].apply(lambda x: elo_ratings[x])
+data['AwayElo'] = data['AwayTeam'].apply(lambda x: elo_ratings[x])
+data['Handicap'] = 0
+X = data[['HomeElo', 'AwayElo', 'Handicap']]
+y = []
+for index, row in data.iterrows():
+    home_score = row['FTHG']
+    away_score = row['FTAG']
+    handicap = row['Handicap']
+    home_score, away_score = apply_handicap(home_score, away_score, handicap)
+    if home_score > away_score:
+        y.append(1)
+    elif home_score < away_score:
+        y.append(2)
+    else:
+        y.append(0)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Обучение модели RandomForest
+model = RandomForestClassifier(n_estimators=100, random_state=42)
+model.fit(X_train, y_train)
+
+# Получение предсказаний на тестовой выборке
+y_pred = model.predict(X_test)
+
+# Вычисление метрики f1
+f1 = f1_score(y_test, y_pred, average='weighted')
+
+# Предсказание результата матча
+def predict_match_result(home_team, away_team, handicap):
+    home_elo = elo_ratings[home_team]
+    away_elo = elo_ratings[away_team]
+    home_score, away_score = apply_handicap(0, 0, handicap)
+    prediction = model.predict([[home_elo, away_elo, handicap]])
+    if prediction == 1:
+        return f"{home_team} выиграет"
+    elif prediction == 2:
+        return f"{away_team} выиграет"
+    else:
+        return "Ничья"
+
+# Пример использования функции predict_match_result:
+
+home_team = input('Введите название команды, играющей дома: ')
+away_team = input('Введите название гостевой команды: ')
+handicap = float(input('Введите фору для домашней команды: ')) #фора для домашней команды
+
+data1 = pd.read_csv('E0.csv')
+row = data1.loc[(data1['HomeTeam'] == home_team) & (data1['AwayTeam'] == away_team)]
+ftr = row.at[row.index[0], 'FTR']
+
+print("Сравнение с Премьер-лигой 2022/2023:")
+if ftr == 'H':
+    print(f"{home_team} выигрaла")
+elif ftr == 'A':
+    print(f"{away_team} выиграла")
+else:
+    print("Ничья")
+    
+result = predict_match_result(home_team, away_team, handicap)
+
+print(f"Результат предсказания: {result}")
+print(f"Значение метрики f1 на тестовой выборке: {f1}")
